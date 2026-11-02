@@ -18,7 +18,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore';
 import {
-  Check, Copy, Upload, X, Lock, LogOut, Cat, Eye, Trash2,
+  Check, Copy, Upload, X, Lock, LogOut, Eye, Trash2,
   Clock, BadgeCheck, ChevronRight, MessageCircleHeart, Send,
 } from 'lucide-react';
 
@@ -37,49 +37,49 @@ const db = getFirestore(app);
 const appId = 'pihu-care-fund-app';
 const base = ['artifacts', appId, 'public', 'data'] as const;
 const donationsCol = () => collection(db, ...base, 'pihu_donations');
-const proofDoc  = (id: string) => doc(db, ...base, 'pihu_proofs',   id);
-const proofsCol = ()           => collection(db, ...base, 'pihu_proofs');
-const messagesCol = ()         => collection(db, ...base, 'pihu_messages');
+const proofDoc = (id: string) => doc(db, ...base, 'pihu_proofs', id);
+const proofsCol = () => collection(db, ...base, 'pihu_proofs');
+const messagesCol = () => collection(db, ...base, 'pihu_messages');
 
 // ---------- Config ----------
-const UPI_ID = '80882.hostel@upi'; // <- change this
+const UPI_ID = '8088256450@fam';
 
 // 3 cascading goals
 const GOALS = [
-  { amount: 5000,  label: 'Basic Necessities',        desc: 'Food & essentials for a month',                color: '#f59e0b', track: '#fde68a' },
-  { amount: 7500,  label: 'Necessities + Accessories', desc: 'Comfort & care',                              color: '#10b981', track: '#a7f3d0' },
-  { amount: 10000, label: 'Final Boss',                desc: 'Vaccination + Checkup + Food + Toys & Treats', color: '#8b5cf6', track: '#ddd6fe' },
+  { amount: 5000, label: 'Basic Necessities', desc: 'Food & essentials for a month', color: '#f59e0b', track: '#fde68a' },
+  { amount: 7500, label: 'Necessities + Accessories', desc: 'Comfort & care', color: '#10b981', track: '#a7f3d0' },
+  { amount: 10000, label: 'Final Boss', desc: 'Vaccination + Checkup + Food + Toys & Treats', color: '#8b5cf6', track: '#ddd6fe' },
 ];
 
 // Per-user milestone levels. Level 0 = starting state (Stranger).
 const USER_LEVELS = [
-  { amount: 0,    level: 0, title: 'Stranger',        icon: '👤' },
-  { amount: 100,  level: 1, title: 'Treat Stash',     icon: '🐟' },
-  { amount: 250,  level: 2, title: 'Daily Care',      icon: '🧶' },
-  { amount: 500,  level: 3, title: 'Essentials',      icon: '💊' },
+  { amount: 0, level: 0, title: 'Stranger', icon: '👤' },
+  { amount: 100, level: 1, title: 'Treat Stash', icon: '🐟' },
+  { amount: 250, level: 2, title: 'Daily Care', icon: '🧶' },
+  { amount: 500, level: 3, title: 'Essentials', icon: '💊' },
   { amount: 1000, level: 4, title: 'Medical Checkup', icon: '🩺' },
-  { amount: 2000, level: 5, title: 'Vaccination',     icon: '💉' },
+  { amount: 2000, level: 5, title: 'Vaccination', icon: '💉' },
 ];
 
 // Donor title/rank system
 const TITLES = [
-  { min: 2000, title: "Pihu's Family",   icon: '👨‍👩‍👧', perks: true  },
-  { min: 1000, title: "Pihu's Guardian", icon: '🛡️',      perks: false },
-  { min: 500,  title: 'Cat Lover',       icon: '❤️',      perks: false },
-  { min: 250,  title: "Pihu's Admirer",  icon: '🌸',      perks: false },
-  { min: 100,  title: 'Friendly Being',  icon: '😊',      perks: false },
-  { min: 1,    title: 'Kind Passerby',   icon: '🐾',      perks: false },
+  { min: 2000, title: "Pihu's Family", icon: '👨‍👩‍👧', perks: true },
+  { min: 1000, title: "Pihu's Guardian", icon: '🛡️', perks: false },
+  { min: 500, title: 'Cat Lover', icon: '❤️', perks: false },
+  { min: 250, title: "Pihu's Admirer", icon: '🌸', perks: false },
+  { min: 100, title: 'Friendly Being', icon: '😊', perks: false },
+  { min: 1, title: 'Kind Passerby', icon: '🐾', perks: false },
 ];
 
 // Cat emotions by amount
 const CAT_EMOTIONS = [
-  { min: 2000, emoji: '😻', mood: 'Over the moon!'  },
-  { min: 1000, emoji: '😸', mood: 'So happy!'       },
-  { min: 500,  emoji: '😺', mood: 'Very pleased~'   },
-  { min: 250,  emoji: '🙂', mood: 'Warming up…'     },
-  { min: 100,  emoji: '😐', mood: 'Noticing you…'   },
-  { min: 1,    emoji: '🐱', mood: 'A little help?'  },
-  { min: 0,    emoji: '😿', mood: 'Pihu needs you…' },
+  { min: 2000, emoji: '😻', mood: 'Over the moon!' },
+  { min: 1000, emoji: '😸', mood: 'So happy!' },
+  { min: 500, emoji: '😺', mood: 'Very pleased~' },
+  { min: 250, emoji: '🙂', mood: 'Warming up…' },
+  { min: 100, emoji: '😐', mood: 'Noticing you…' },
+  { min: 1, emoji: '🐱', mood: 'A little help?' },
+  { min: 0, emoji: '😿', mood: 'Pihu needs you…' },
 ];
 
 const getTitle = (total: number) =>
@@ -124,7 +124,7 @@ const compressImage = (file: File, maxWidth = 700, quality = 0.65): Promise<stri
       img.onload = () => {
         const scale = img.width > maxWidth ? maxWidth / img.width : 1;
         const canvas = document.createElement('canvas');
-        canvas.width  = Math.round(img.width  * scale);
+        canvas.width = Math.round(img.width * scale);
         canvas.height = Math.round(img.height * scale);
         canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL('image/jpeg', quality));
@@ -137,7 +137,7 @@ const compressImage = (file: File, maxWidth = 700, quality = 0.65): Promise<stri
 const timeAgo = (t?: number) => {
   if (!t) return 'just now';
   const m = Math.max(0, Math.floor((Date.now() - t) / 60000));
-  if (m < 1)  return 'just now';
+  if (m < 1) return 'just now';
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
@@ -147,8 +147,8 @@ const inr = (n: number) => `₹${Number(n).toLocaleString('en-IN')}`;
 // ---------- Animated counter ----------
 function useCountUp(target: number, durationMs = 3000) {
   const [display, setDisplay] = useState(0);
-  const startRef   = useRef<number | null>(null);
-  const rafRef     = useRef<number>(0);
+  const startRef = useRef<number | null>(null);
+  const rafRef = useRef<number>(0);
   const prevTarget = useRef(0);
 
   useEffect(() => {
@@ -158,9 +158,9 @@ function useCountUp(target: number, durationMs = 3000) {
     startRef.current = null;
     const step = (now: number) => {
       if (startRef.current === null) startRef.current = now;
-      const elapsed  = now - startRef.current;
+      const elapsed = now - startRef.current;
       const progress = Math.min(elapsed / durationMs, 1);
-      const eased    = 1 - Math.pow(1 - progress, 3);
+      const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(Math.round(from + (target - from) * eased));
       if (progress < 1) rafRef.current = requestAnimationFrame(step);
     };
@@ -179,8 +179,8 @@ function GoalBars({ verified, pending }: { verified: number; pending: number }) 
   return (
     <div className="space-y-4 mt-6">
       {GOALS.map((g, i) => {
-        const pctV   = Math.min(100, (animV / g.amount) * 100);
-        const pctT   = Math.min(100, ((animV + animP) / g.amount) * 100);
+        const pctV = Math.min(100, (animV / g.amount) * 100);
+        const pctT = Math.min(100, ((animV + animP) / g.amount) * 100);
         const reached = verified >= g.amount;
         return (
           <div key={g.amount}>
@@ -215,30 +215,30 @@ function GoalBars({ verified, pending }: { verified: number; pending: number }) 
 
 // ===================== Main App =====================
 export default function App() {
-  const [user, setUser]           = useState<any>(null);
+  const [user, setUser] = useState<any>(null);
   const [donations, setDonations] = useState<any[]>([]);
-  const [proofs, setProofs]       = useState<Record<string, string>>({});
-  const [messages, setMessages]   = useState<any[]>([]);
-  const [loading, setLoading]     = useState(true);
+  const [proofs, setProofs] = useState<Record<string, string>>({});
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [view, setView]         = useState<'board' | 'admin'>('board');
+  const [view, setView] = useState<'board' | 'admin'>('board');
   const [adminTab, setAdminTab] = useState<'queue' | 'messages'>('queue');
-  const [sortBy, setSortBy]     = useState<'amount' | 'recent'>('amount');
-  const [showDonate, setShowDonate]   = useState(false);
-  const [donateStep, setDonateStep]   = useState<'name' | 'amount'>('name');
-  const [preview, setPreview]   = useState<any>(null);
+  const [sortBy, setSortBy] = useState<'amount' | 'recent'>('amount');
+  const [showDonate, setShowDonate] = useState(false);
+  const [donateStep, setDonateStep] = useState<'name' | 'amount'>('name');
+  const [preview, setPreview] = useState<any>(null);
   const [confirmDelete, setConfirmDelete] = useState<any>(null); // entry pending inline delete confirm
-  const [toast, setToast]       = useState<{ msg: string; err?: boolean } | null>(null);
+  const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null);
 
   // ------- Message-to-Pihu modal state -------
   // "celebration" = shown right after a new milestone; "credits" = opened from homescreen button
-  const [showMsgModal, setShowMsgModal]         = useState(false);
-  const [msgModalMode, setMsgModalMode]         = useState<'celebration' | 'credits'>('celebration');
+  const [showMsgModal, setShowMsgModal] = useState(false);
+  const [msgModalMode, setMsgModalMode] = useState<'celebration' | 'credits'>('celebration');
   const [modalHighestLevel, setModalHighestLevel] = useState<typeof USER_LEVELS[0]>(USER_LEVELS[0]);
-  const [msgCreditsLeft, setMsgCreditsLeft]     = useState(0); // credits remaining in current session
-  const [pihuMsg, setPihuMsg]                   = useState('');
-  const [sendingMsg, setSendingMsg]             = useState(false);
-  const [msgSenderName, setMsgSenderName]       = useState('');
+  const [msgCreditsLeft, setMsgCreditsLeft] = useState(0); // credits remaining in current session
+  const [pihuMsg, setPihuMsg] = useState('');
+  const [sendingMsg, setSendingMsg] = useState(false);
+  const [msgSenderName, setMsgSenderName] = useState('');
 
   // Reactive home-screen credit count (reads localStorage)
   const [homeCredits, setHomeCredits] = useState(() => {
@@ -251,17 +251,17 @@ export default function App() {
   }, []);
 
   // ------- Donor form -------
-  const [name, setName]           = useState(() => localStorage.getItem('pihu_donor_name') ?? '');
-  const [amount, setAmount]       = useState(100);
+  const [name, setName] = useState(() => localStorage.getItem('pihu_donor_name') ?? '');
+  const [amount, setAmount] = useState(100);
   const [amountStr, setAmountStr] = useState('100');
   const [sliderRaw, setSliderRaw] = useState(amountToSlider(100));
-  const [shot, setShot]           = useState('');
-  const [shotName, setShotName]   = useState('');
+  const [shot, setShot] = useState('');
+  const [shotName, setShotName] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [copied, setCopied]         = useState(false);
+  const [copied, setCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [email, setEmail]       = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginErr, setLoginErr] = useState('');
 
@@ -348,7 +348,7 @@ export default function App() {
       : arr.sort((a, b) => b.latestAt - a.latestAt);
   }, [donations, sortBy]);
 
-  const pendingList  = useMemo(() => donations.filter((d) => d.status === 'Pending').sort((a, b) => b.createdAt - a.createdAt), [donations]);
+  const pendingList = useMemo(() => donations.filter((d) => d.status === 'Pending').sort((a, b) => b.createdAt - a.createdAt), [donations]);
   const verifiedList = useMemo(() => donations.filter((d) => d.status === 'Verified').sort((a, b) => b.createdAt - a.createdAt), [donations]);
 
   // ---------- Amount / slider ----------
@@ -400,15 +400,15 @@ export default function App() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = name.trim();
-    const amt   = amount;
-    if (!user)                         return;
-    if (!clean)                        return notify('Add a display name.', true);
+    const amt = amount;
+    if (!user) return;
+    if (!clean) return notify('Add a display name.', true);
     if (!amt || amt <= 0 || amt > 5000) return notify('Enter a valid amount (₹1–₹5,000).', true);
-    if (!shot)                         return notify('Attach your payment screenshot.', true);
+    if (!shot) return notify('Attach your payment screenshot.', true);
 
     // Level BEFORE this donation (based on verified total only)
     const prevVerified = cumulativeByName[clean] ?? 0;
-    const prevLevel    = getUserLevel(prevVerified);   // always defined (min level 0)
+    const prevLevel = getUserLevel(prevVerified);   // always defined (min level 0)
 
     setSubmitting(true);
     try {
@@ -423,8 +423,8 @@ export default function App() {
       setShot(''); setShotName(''); setShowDonate(false);
 
       // Level counting includes this new (pending) amount
-      const newTotal    = prevVerified + amt;
-      const newLevel    = getUserLevel(newTotal);
+      const newTotal = prevVerified + amt;
+      const newLevel = getUserLevel(newTotal);
       const levelsGained = newLevel.level - prevLevel.level;
 
       if (levelsGained > 0) {
@@ -555,10 +555,10 @@ export default function App() {
     if (!name.trim()) return 0;
     return cumulativeByName[name.trim()] ?? 0;
   }, [name, cumulativeByName]);
-  const myNewTotal   = myPreviousTotal + amount;
+  const myNewTotal = myPreviousTotal + amount;
   const currentTitle = getTitle(myNewTotal);
-  const catEmotion   = getCatEmotion(amount);
-  const myLevel      = getUserLevel(myNewTotal);
+  const catEmotion = getCatEmotion(amount);
+  const myLevel = getUserLevel(myNewTotal);
 
   const animatedVerified = useCountUp(stats.verified);
 
@@ -566,18 +566,21 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#faf7f2] text-stone-900 antialiased">
       {toast && (
-        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg ${
-          toast.err ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'
-        }`}>
+        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg ${toast.err ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'
+          }`}>
           {toast.msg}
         </div>
       )}
 
       {/* Header */}
       <header className="max-w-3xl mx-auto px-5 h-16 flex items-center justify-between">
-        <button onClick={() => setView('board')} className="flex items-center gap-2.5">
-          <span className="w-9 h-9 rounded-xl bg-stone-900 text-amber-300 flex items-center justify-center">
-            <Cat className="w-5 h-5" />
+        <button onClick={() => setView('board')} className="flex items-center gap-2.5 group text-left">
+          <span className="w-9 h-9 rounded-full bg-stone-900 overflow-hidden border border-stone-800 flex items-center justify-center shrink-0 shadow-sm">
+            <img
+              src="/pihu.jpg"
+              alt="Pihu"
+              className="w-full h-full object-cover object-[50%_20%] group-hover:scale-105 transition-transform duration-200"
+            />
           </span>
           <span className="font-bold tracking-tight">Pihu&apos;s Care Fund</span>
         </button>
@@ -638,6 +641,22 @@ export default function App() {
                 <span className="text-sm text-stone-400">collected</span>
               </div>
               <GoalBars verified={stats.verified} pending={stats.pending} />
+
+              <div className="mt-6 pt-5 border-t border-stone-100 flex flex-col sm:flex-row items-center gap-3">
+                <a
+                  href="upi://pay?pa=8088256450@fam&pn=DONATE TO PIHU&cu=INR"
+                  id="__UPI_BUTTON__"
+                  className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-stone-950 font-bold px-6 py-3.5 rounded-2xl shadow-sm border border-amber-600/20 text-center text-sm sm:text-base tracking-wide transition"
+                >
+                  PAY BY ANY UPI APP
+                </a>
+                <button
+                  onClick={openDonate}
+                  className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-2 bg-stone-900 hover:bg-stone-800 active:scale-95 text-white font-bold px-6 py-3.5 rounded-2xl text-center text-sm sm:text-base tracking-wide transition"
+                >
+                  Donate &amp; Join Board
+                </button>
+              </div>
             </section>
 
             {/* Donor levels legend */}
@@ -645,9 +664,8 @@ export default function App() {
               <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-3">Donor Levels</p>
               <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
                 {USER_LEVELS.map((lvl) => (
-                  <div key={lvl.level} className={`rounded-2xl p-3 border text-left ${
-                    lvl.level === 0 ? 'bg-stone-50 border-stone-200 opacity-60' : 'bg-stone-50 border-stone-100'
-                  }`}>
+                  <div key={lvl.level} className={`rounded-2xl p-3 border text-left ${lvl.level === 0 ? 'bg-stone-50 border-stone-200 opacity-60' : 'bg-stone-50 border-stone-100'
+                    }`}>
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-black tracking-wider text-stone-400">
                         {lvl.level === 0 ? 'START' : `LVL ${lvl.level}`}
@@ -663,9 +681,8 @@ export default function App() {
                 <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-2">Donor Titles</p>
                 <div className="flex flex-wrap gap-2">
                   {TITLES.map((t) => (
-                    <span key={t.title} className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
-                      t.perks ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-600'
-                    }`}>
+                    <span key={t.title} className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${t.perks ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-600'
+                      }`}>
                       {t.icon} {t.title} {t.perks ? '⭐' : ''}
                     </span>
                   ))}
@@ -704,9 +721,9 @@ export default function App() {
               ) : (
                 <ul className="divide-y divide-stone-100">
                   {leaderboard.map((d, i) => {
-                    const t     = getTitle(d.verifiedAmount);
+                    const t = getTitle(d.verifiedAmount);
                     const medal = sortBy === 'amount' ? ['🥇', '🥈', '🥉'][i] : undefined;
-                    const lvl   = getUserLevel(d.verifiedAmount);
+                    const lvl = getUserLevel(d.verifiedAmount);
                     return (
                       <li key={d.displayName} className="px-5 sm:px-6 py-4 flex items-center gap-4">
                         <div className="w-8 text-center font-bold text-stone-400 shrink-0">
@@ -972,16 +989,24 @@ export default function App() {
                 </div>
 
                 {/* UPI */}
-                <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 flex items-center justify-between gap-3 mb-5">
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400">1 · Pay via UPI</div>
-                    <div className="font-mono font-bold truncate">{UPI_ID}</div>
+                <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 mb-5 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400">1 · Pay via UPI</div>
+                      <div className="font-mono font-bold truncate">{UPI_ID}</div>
+                    </div>
+                    <button type="button" onClick={copyUpi}
+                      className="text-xs font-semibold bg-white border border-stone-200 hover:bg-stone-100 rounded-full px-3 py-1.5 flex items-center gap-1.5 shrink-0 transition">
+                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copied ? 'Copied' : 'Copy'}
+                    </button>
                   </div>
-                  <button onClick={copyUpi}
-                    className="text-xs font-semibold bg-white border border-stone-200 rounded-full px-3 py-1.5 flex items-center gap-1.5 shrink-0">
-                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
+                  <a
+                    href={`upi://pay?pa=${UPI_ID}&pn=DONATE TO PIHU&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
+                    className="w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-stone-950 font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm tracking-wide transition border border-amber-600/20 shadow-sm"
+                  >
+                    PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
+                  </a>
                 </div>
 
                 <form onSubmit={submit} className="space-y-5">
@@ -1027,12 +1052,11 @@ export default function App() {
                     <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-400 mb-2">Your Level Progress</p>
                     <div className="flex gap-1.5 flex-wrap">
                       {USER_LEVELS.map((lvl) => {
-                        const reached   = myNewTotal >= lvl.amount;
+                        const reached = myNewTotal >= lvl.amount;
                         const isCurrent = myLevel?.level === lvl.level;
                         return (
-                          <div key={lvl.level} className={`flex-1 min-w-[48px] rounded-xl p-2 border text-center transition-all ${
-                            reached ? 'bg-amber-50 border-amber-300' : 'bg-stone-50 border-stone-100 opacity-40'
-                          } ${isCurrent ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}>
+                          <div key={lvl.level} className={`flex-1 min-w-[48px] rounded-xl p-2 border text-center transition-all ${reached ? 'bg-amber-50 border-amber-300' : 'bg-stone-50 border-stone-100 opacity-40'
+                            } ${isCurrent ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}>
                             <div className="text-base">{lvl.icon}</div>
                             <div className="text-[9px] font-bold text-stone-400">
                               {lvl.level === 0 ? 'START' : `LVL ${lvl.level}`}
@@ -1045,9 +1069,8 @@ export default function App() {
                   </div>
 
                   {/* Title preview */}
-                  <div className={`rounded-2xl p-3 border text-center ${
-                    currentTitle.perks ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'
-                  }`}>
+                  <div className={`rounded-2xl p-3 border text-center ${currentTitle.perks ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'
+                    }`}>
                     <div className="text-2xl mb-0.5">{currentTitle.icon}</div>
                     <div className="font-bold text-sm">{currentTitle.title}</div>
                     <div className="text-xs text-stone-500 mt-0.5">
