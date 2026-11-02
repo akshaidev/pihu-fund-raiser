@@ -42,7 +42,7 @@ const proofsCol = () => collection(db, ...base, 'pihu_proofs');
 const messagesCol = () => collection(db, ...base, 'pihu_messages');
 
 // ---------- Config ----------
-const UPI_ID = '8088256450@fam';
+const UPI_ID = '8088256450@fam'; // <- change this
 
 // 3 cascading goals
 const GOALS = [
@@ -641,22 +641,6 @@ export default function App() {
                 <span className="text-sm text-stone-400">collected</span>
               </div>
               <GoalBars verified={stats.verified} pending={stats.pending} />
-
-              <div className="mt-6 pt-5 border-t border-stone-100 flex flex-col sm:flex-row items-center gap-3">
-                <a
-                  href="upi://pay?pa=8088256450@fam&pn=DONATE TO PIHU&cu=INR"
-                  id="__UPI_BUTTON__"
-                  className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-stone-950 font-bold px-6 py-3.5 rounded-2xl shadow-sm border border-amber-600/20 text-center text-sm sm:text-base tracking-wide transition"
-                >
-                  PAY BY ANY UPI APP
-                </a>
-                <button
-                  onClick={openDonate}
-                  className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-2 bg-stone-900 hover:bg-stone-800 active:scale-95 text-white font-bold px-6 py-3.5 rounded-2xl text-center text-sm sm:text-base tracking-wide transition"
-                >
-                  Donate &amp; Join Board
-                </button>
-              </div>
             </section>
 
             {/* Donor levels legend */}
@@ -1003,6 +987,7 @@ export default function App() {
                   </div>
                   <a
                     href={`upi://pay?pa=${UPI_ID}&pn=DONATE TO PIHU&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
+                    id="__UPI_BUTTON__"
                     className="w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-stone-950 font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm tracking-wide transition border border-amber-600/20 shadow-sm"
                   >
                     PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
