@@ -798,9 +798,6 @@ export default function App() {
                     </span>
                   ))}
                 </div>
-                <p className="text-[11px] text-stone-400 mt-2">
-                  ⭐ Pihu&apos;s Family (₹2,000+) get access to Pihu&apos;s exclusive pics &amp; videos!
-                </p>
               </div>
             </section>
 
