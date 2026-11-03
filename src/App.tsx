@@ -9,6 +9,9 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection,
   addDoc,
   setDoc,
@@ -16,6 +19,7 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
+  type Firestore,
 } from 'firebase/firestore';
 import {
   Check, Copy, Upload, X, Lock, LogOut, Eye, Trash2,
@@ -33,7 +37,18 @@ const firebaseConfig = {
 };
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+
+// Persistent local cache: on repeat visits the leaderboard renders from disk instantly,
+// then the server snapshot fills in anything new.
+let db: Firestore;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch {
+  db = getFirestore(app);
+}
+
 const appId = 'pihu-care-fund-app';
 const base = ['artifacts', appId, 'public', 'data'] as const;
 const donationsCol = () => collection(db, ...base, 'pihu_donations');
@@ -42,16 +57,14 @@ const proofsCol = () => collection(db, ...base, 'pihu_proofs');
 const messagesCol = () => collection(db, ...base, 'pihu_messages');
 
 // ---------- Config ----------
-const UPI_ID = '8088256450@fam'; // <- change this
+const UPI_ID = '8088256450@fam';
 
-// 3 cascading goals
 const GOALS = [
-  { amount: 5000, label: 'Basic Necessities', desc: 'Food & essentials for a month', color: '#f59e0b', track: '#fde68a' },
-  { amount: 7500, label: 'Necessities + Accessories', desc: 'Comfort & care', color: '#10b981', track: '#a7f3d0' },
-  { amount: 10000, label: 'Final Boss', desc: 'Vaccination + Checkup + Food + Toys & Treats', color: '#8b5cf6', track: '#ddd6fe' },
+  { amount: 5000, label: 'Basic Necessities', desc: 'Food & essentials for a month', color: '#f59e0b', track: '#fef3c7' },
+  { amount: 7500, label: 'Necessities + Accessories', desc: 'Comfort & care', color: '#10b981', track: '#d1fae5' },
+  { amount: 10000, label: 'Final Boss', desc: 'Vaccination + Checkup + Food + Toys & Treats', color: '#8b5cf6', track: '#ede9fe' },
 ];
 
-// Per-user milestone levels. Level 0 = starting state (Stranger).
 const USER_LEVELS = [
   { amount: 0, level: 0, title: 'Stranger', icon: '👤' },
   { amount: 100, level: 1, title: 'Treat Stash', icon: '🐟' },
@@ -61,7 +74,6 @@ const USER_LEVELS = [
   { amount: 2000, level: 5, title: 'Vaccination', icon: '💉' },
 ];
 
-// Donor title/rank system
 const TITLES = [
   { min: 2000, title: "Pihu's Family", icon: '👨‍👩‍👧', perks: true },
   { min: 1000, title: "Pihu's Guardian", icon: '🛡️', perks: false },
@@ -71,7 +83,6 @@ const TITLES = [
   { min: 1, title: 'Kind Passerby', icon: '🐾', perks: false },
 ];
 
-// Cat emotions by amount
 const CAT_EMOTIONS = [
   { min: 2000, emoji: '😻', mood: 'Over the moon!' },
   { min: 1000, emoji: '😸', mood: 'So happy!' },
@@ -82,26 +93,53 @@ const CAT_EMOTIONS = [
   { min: 0, emoji: '😿', mood: 'Pihu needs you…' },
 ];
 
+const AVATAR_STYLES = [
+  'bg-amber-100 text-amber-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-violet-100 text-violet-700',
+  'bg-rose-100 text-rose-700',
+  'bg-sky-100 text-sky-700',
+];
+const avatarStyle = (name: string) => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h += name.charCodeAt(i);
+  return AVATAR_STYLES[h % AVATAR_STYLES.length];
+};
+
 const getTitle = (total: number) =>
   TITLES.find((t) => total >= t.min) ?? { title: 'Kind Passerby', icon: '🐾', perks: false };
-
 const getCatEmotion = (amount: number) =>
   CAT_EMOTIONS.find((c) => amount >= c.min) ?? CAT_EMOTIONS[CAT_EMOTIONS.length - 1];
-
-// Always returns a level (level 0 as minimum — "Stranger")
 const getUserLevel = (total: number) =>
   [...USER_LEVELS].reverse().find((l) => total >= l.amount) ?? USER_LEVELS[0];
 
-// ---------- Message credit helpers (persisted in localStorage) ----------
+// ---------- Safe localStorage (can throw in private mode) ----------
+const lsGet = (k: string): string | null => {
+  try { return localStorage.getItem(k); } catch { return null; }
+};
+const lsSet = (k: string, v: string) => {
+  try { localStorage.setItem(k, v); } catch { /* ignore */ }
+};
+
+// ---------- Message credit helpers ----------
 const creditKey = (name: string) => `pihu_msg_credits_${name.trim().toLowerCase()}`;
 const getCredits = (name: string): number =>
-  name.trim() ? Math.max(0, Number(localStorage.getItem(creditKey(name)) ?? 0)) : 0;
-const saveCredits = (name: string, n: number) =>
-  localStorage.setItem(creditKey(name), String(Math.max(0, n)));
-const addCredits = (name: string, delta: number) =>
-  saveCredits(name, getCredits(name) + delta);
-const spendCredit = (name: string) =>
-  saveCredits(name, getCredits(name) - 1);
+  name.trim() ? Math.max(0, Number(lsGet(creditKey(name)) ?? 0) || 0) : 0;
+const saveCredits = (name: string, n: number) => lsSet(creditKey(name), String(Math.max(0, n)));
+const addCredits = (name: string, delta: number) => saveCredits(name, getCredits(name) + delta);
+const spendCredit = (name: string) => saveCredits(name, getCredits(name) - 1);
+
+// ---------- Stats cache: first paint shows last-known total, no wait ----------
+const STATS_KEY = 'pihu_stats_cache_v1';
+const readStatsCache = () => {
+  try {
+    const j = JSON.parse(lsGet(STATS_KEY) ?? '');
+    return { verified: Number(j.verified) || 0, pending: Number(j.pending) || 0, ok: true };
+  } catch {
+    return { verified: 0, pending: 0, ok: false };
+  }
+};
+const cachedStats = readStatsCache();
 
 // ---------- Non-linear slider ----------
 const sliderToAmount = (raw: number): number => {
@@ -114,24 +152,25 @@ const amountToSlider = (amt: number): number => {
   return Math.round(50 + ((c - 150) / (5000 - 150)) * (5000 - 50));
 };
 
+// Uses an object URL instead of FileReader: far lighter on phones with big screenshots.
 const compressImage = (file: File, maxWidth = 700, quality = 0.65): Promise<string> =>
   new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = reject;
-      img.onload = () => {
-        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.src = e.target!.result as string;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not load image'));
+    };
+    img.src = url;
   });
 
 const timeAgo = (t?: number) => {
@@ -144,68 +183,112 @@ const timeAgo = (t?: number) => {
 };
 const inr = (n: number) => `₹${Number(n).toLocaleString('en-IN')}`;
 
-// ---------- Animated counter ----------
-function useCountUp(target: number, durationMs = 3000) {
-  const [display, setDisplay] = useState(0);
-  const startRef = useRef<number | null>(null);
-  const rafRef = useRef<number>(0);
-  const prevTarget = useRef(0);
+// ---------- Global CSS: slider, touch, one-shot pop, reduced motion ----------
+const CSS = `
+button,a{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.pihu-slider{-webkit-appearance:none;appearance:none;width:100%;height:8px;border-radius:9999px;background:#e7e5e4;outline:none;cursor:pointer;margin:10px 0}
+.pihu-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;border-radius:50%;background:#1c1917;cursor:pointer;border:4px solid #fff;box-shadow:0 0 0 2px #1c1917}
+.pihu-slider::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:#1c1917;cursor:pointer;border:4px solid #fff;box-shadow:0 0 0 2px #1c1917}
+@keyframes pihu-pop{0%{transform:scale(.6)}60%{transform:scale(1.15)}100%{transform:scale(1)}}
+.pihu-pop{animation:pihu-pop .5s ease-out 1}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+`;
+
+// ---------- Animated counter (short, starts from last-known value) ----------
+function useCountUp(target: number, initial = 0, durationMs = 2000, delayMs = 0) {
+  const [display, setDisplay] = useState(initial);
+  const shown = useRef(initial);
 
   useEffect(() => {
-    const from = prevTarget.current;
-    prevTarget.current = target;
+    const from = shown.current;
     if (from === target) return;
-    startRef.current = null;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      shown.current = target;
+      setDisplay(target);
+      return;
+    }
+    let raf = 0;
+    let start: number | null = null;
+    const delay = from === 0 ? delayMs : 0; // delay only applies to the initial fill
     const step = (now: number) => {
-      if (startRef.current === null) startRef.current = now;
-      const elapsed = now - startRef.current;
-      const progress = Math.min(elapsed / durationMs, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplay(Math.round(from + (target - from) * eased));
-      if (progress < 1) rafRef.current = requestAnimationFrame(step);
+      if (start === null) start = now;
+      const p = Math.min(Math.max((now - start - delay) / durationMs, 0), 1);
+      const eased = p >= 1 ? 1 : 1 - Math.pow(2, -10 * p); // exponential ease-out
+      const v = Math.round(from + (target - from) * eased);
+      shown.current = v;
+      setDisplay(v);
+      if (p < 1) raf = requestAnimationFrame(step);
     };
-    rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
   }, [target, durationMs]);
 
   return display;
 }
 
-// ---------- Three cascading goal bars ----------
+// Isolated so the per-frame re-render never touches the rest of the page.
+function AnimatedAmount({ value, initial }: { value: number; initial: number }) {
+  const v = useCountUp(value, initial);
+  return <>{inr(v)}</>;
+}
+
+// ---------- Goal bars (CSS-transitioned, not JS-driven) ----------
 function GoalBars({ verified, pending }: { verified: number; pending: number }) {
+  // Bars start with the number but move at half its pace, then snap the gap shut when the number lands.
   const animV = useCountUp(verified);
   const animP = useCountUp(pending);
+  const settled = useRef({ v: 0, p: 0 });
+  const done = animV === verified && animP === pending;
+  if (done) settled.current = { v: verified, p: pending };
+  const half = (a: number, s: number) => s + (a - s) * 0.5;
+  const shownV = done ? verified : half(animV, settled.current.v);
+  const shownP = done ? pending : half(animP, settled.current.p);
+  const barMs = done ? 350 : 0;
+  const activeIdx = GOALS.findIndex((g) => verified < g.amount);
 
   return (
-    <div className="space-y-4 mt-6">
+    <div className="space-y-2 mt-5">
       {GOALS.map((g, i) => {
-        const pctV = Math.min(100, (animV / g.amount) * 100);
-        const pctT = Math.min(100, ((animV + animP) / g.amount) * 100);
+        const pctV = Math.min(100, (shownV / g.amount) * 100);
+        const pctT = Math.min(100, ((shownV + shownP) / g.amount) * 100);
         const reached = verified >= g.amount;
+        const active = i === activeIdx;
         return (
-          <div key={g.amount}>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black tracking-widest uppercase px-1.5 py-0.5 rounded-md"
-                  style={{ background: g.track, color: g.color }}>
+          <div
+            key={g.amount}
+            className={`rounded-2xl p-3 border transition-colors ${active ? 'bg-stone-50 border-stone-200' : 'border-transparent'}`}
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="text-[10px] font-black tracking-widest uppercase px-1.5 py-0.5 rounded-md shrink-0"
+                  style={{ background: g.track, color: g.color }}
+                >
                   Goal {i + 1}
                 </span>
-                <span className="text-sm font-semibold text-stone-700">{g.label}</span>
+                <span className="text-sm font-semibold text-stone-800 leading-tight">{g.label}</span>
               </div>
-              <div className="text-right">
-                <span className="font-black font-mono text-sm" style={{ color: reached ? g.color : undefined }}>
-                  {inr(g.amount)}
-                </span>
-                {reached && <span className="ml-1.5 text-xs font-bold" style={{ color: g.color }}>✓ Reached!</span>}
-              </div>
+              <span className="font-black font-mono text-sm shrink-0" style={{ color: reached ? g.color : undefined }}>
+                {reached ? '✓ ' : ''}{inr(g.amount)}
+              </span>
             </div>
-            <div className="relative h-3 rounded-full" style={{ background: g.track }}>
-              <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 opacity-40"
-                style={{ width: `${pctT}%`, background: g.color }} />
-              <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
-                style={{ width: `${pctV}%`, background: g.color }} />
+            <div className="relative h-2.5 rounded-full" style={{ background: g.track }}>
+              <div
+                className="absolute inset-y-0 left-0 rounded-full opacity-40 transition-[width] ease-out"
+                style={{ width: `${pctT}%`, background: g.color, transitionDuration: `${barMs}ms` }}
+              />
+              <div
+                className="absolute inset-y-0 left-0 rounded-full transition-[width] ease-out"
+                style={{ width: `${pctV}%`, background: g.color, transitionDuration: `${barMs}ms` }}
+              />
             </div>
-            <p className="text-[11px] text-stone-400 mt-0.5">{g.desc}</p>
+            <div className="flex items-center justify-between gap-2 mt-1.5">
+              <p className="text-[11px] text-stone-400 leading-snug">{g.desc}</p>
+              <p className="text-[11px] font-semibold text-stone-500 shrink-0">
+                {reached ? 'Reached!' : `${inr(g.amount - verified)} to go`}
+              </p>
+            </div>
           </div>
         );
       })}
@@ -224,34 +307,29 @@ export default function App() {
   const [view, setView] = useState<'board' | 'admin'>('board');
   const [adminTab, setAdminTab] = useState<'queue' | 'messages'>('queue');
   const [sortBy, setSortBy] = useState<'amount' | 'recent'>('amount');
+  const [showAll, setShowAll] = useState(false);
   const [showDonate, setShowDonate] = useState(false);
   const [donateStep, setDonateStep] = useState<'name' | 'amount'>('name');
   const [preview, setPreview] = useState<any>(null);
-  const [confirmDelete, setConfirmDelete] = useState<any>(null); // entry pending inline delete confirm
+  const [confirmDelete, setConfirmDelete] = useState<any>(null);
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null);
 
-  // ------- Message-to-Pihu modal state -------
-  // "celebration" = shown right after a new milestone; "credits" = opened from homescreen button
+  // Message-to-Pihu modal
   const [showMsgModal, setShowMsgModal] = useState(false);
   const [msgModalMode, setMsgModalMode] = useState<'celebration' | 'credits'>('celebration');
   const [modalHighestLevel, setModalHighestLevel] = useState<typeof USER_LEVELS[0]>(USER_LEVELS[0]);
-  const [msgCreditsLeft, setMsgCreditsLeft] = useState(0); // credits remaining in current session
+  const [msgCreditsLeft, setMsgCreditsLeft] = useState(0);
   const [pihuMsg, setPihuMsg] = useState('');
   const [sendingMsg, setSendingMsg] = useState(false);
   const [msgSenderName, setMsgSenderName] = useState('');
 
-  // Reactive home-screen credit count (reads localStorage)
-  const [homeCredits, setHomeCredits] = useState(() => {
-    const n = localStorage.getItem('pihu_donor_name') ?? '';
-    return getCredits(n);
-  });
+  const [homeCredits, setHomeCredits] = useState(() => getCredits(lsGet('pihu_donor_name') ?? ''));
   const refreshHomeCredits = useCallback(() => {
-    const n = localStorage.getItem('pihu_donor_name') ?? '';
-    setHomeCredits(getCredits(n));
+    setHomeCredits(getCredits(lsGet('pihu_donor_name') ?? ''));
   }, []);
 
-  // ------- Donor form -------
-  const [name, setName] = useState(() => localStorage.getItem('pihu_donor_name') ?? '');
+  // Donor form
+  const [name, setName] = useState(() => lsGet('pihu_donor_name') ?? '');
   const [amount, setAmount] = useState(100);
   const [amountStr, setAmountStr] = useState('100');
   const [sliderRaw, setSliderRaw] = useState(amountToSlider(100));
@@ -272,25 +350,30 @@ export default function App() {
     setTimeout(() => setToast(null), 3200);
   };
 
-  // Auth
+  // Auth runs in the background. Nothing on the leaderboard waits for it.
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       if (u) setUser(u);
-      else signInAnonymously(auth).catch(console.error);
+      else {
+        setUser(null);
+        signInAnonymously(auth).catch(console.error);
+      }
     });
   }, []);
 
-  // Public leaderboard
+  // Public leaderboard: subscribes immediately (rules allow public read).
   useEffect(() => {
-    if (!user) return;
     return onSnapshot(
       donationsCol(),
-      (snap) => { setDonations(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); },
+      (snap) => {
+        setDonations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
       () => setLoading(false)
     );
-  }, [user]);
+  }, []);
 
-  // Proofs — admin only
+  // Proofs: admin only
   useEffect(() => {
     if (!isAdmin) { setProofs({}); return; }
     return onSnapshot(proofsCol(), (snap) => {
@@ -300,7 +383,7 @@ export default function App() {
     });
   }, [isAdmin]);
 
-  // Messages — admin only
+  // Messages: admin only
   useEffect(() => {
     if (!isAdmin) { setMessages([]); return; }
     return onSnapshot(messagesCol(), (snap) => {
@@ -311,7 +394,13 @@ export default function App() {
     });
   }, [isAdmin]);
 
-  // Stats
+  // Lock page scroll behind any open sheet
+  const anyModal = showDonate || showMsgModal || !!preview;
+  useEffect(() => {
+    document.body.style.overflow = anyModal ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [anyModal]);
+
   const stats = useMemo(() => {
     let verified = 0, pending = 0;
     donations.forEach((d) => {
@@ -322,7 +411,15 @@ export default function App() {
     return { verified, pending };
   }, [donations]);
 
-  // Cumulative verified totals per donor name
+  // Save for next visit
+  useEffect(() => {
+    if (!loading) lsSet(STATS_KEY, JSON.stringify(stats));
+  }, [loading, stats]);
+
+  // While the first snapshot is in flight, show last-known numbers instead of zeros
+  const live = loading ? cachedStats : stats;
+  const nextGoal = GOALS.find((g) => live.verified < g.amount);
+
   const cumulativeByName = useMemo(() => {
     const map: Record<string, number> = {};
     donations.forEach((d) => {
@@ -332,7 +429,6 @@ export default function App() {
     return map;
   }, [donations]);
 
-  // Leaderboard grouped by name
   const leaderboard = useMemo(() => {
     const map: Record<string, { displayName: string; totalAmount: number; verifiedAmount: number; latestAt: number }> = {};
     donations.forEach((d) => {
@@ -347,6 +443,8 @@ export default function App() {
       ? arr.sort((a, b) => b.verifiedAmount - a.verifiedAmount || b.totalAmount - a.totalAmount)
       : arr.sort((a, b) => b.latestAt - a.latestAt);
   }, [donations, sortBy]);
+
+  const visibleBoard = showAll ? leaderboard : leaderboard.slice(0, 15);
 
   const pendingList = useMemo(() => donations.filter((d) => d.status === 'Pending').sort((a, b) => b.createdAt - a.createdAt), [donations]);
   const verifiedList = useMemo(() => donations.filter((d) => d.status === 'Verified').sort((a, b) => b.createdAt - a.createdAt), [donations]);
@@ -392,7 +490,7 @@ export default function App() {
   const proceedToAmount = () => {
     const clean = name.trim();
     if (!clean) return notify('Please enter your name.', true);
-    localStorage.setItem('pihu_donor_name', clean);
+    lsSet('pihu_donor_name', clean);
     refreshHomeCredits();
     setDonateStep('amount');
   };
@@ -401,14 +499,19 @@ export default function App() {
     e.preventDefault();
     const clean = name.trim();
     const amt = amount;
-    if (!user) return;
     if (!clean) return notify('Add a display name.', true);
     if (!amt || amt <= 0 || amt > 5000) return notify('Enter a valid amount (₹1–₹5,000).', true);
     if (!shot) return notify('Attach your payment screenshot.', true);
 
-    // Level BEFORE this donation (based on verified total only)
+    // Sign-in is non-blocking on load, so make sure it exists before writing.
+    let u = auth.currentUser;
+    if (!u) {
+      try { u = (await signInAnonymously(auth)).user; }
+      catch { return notify('Could not connect. Check your internet and retry.', true); }
+    }
+
     const prevVerified = cumulativeByName[clean] ?? 0;
-    const prevLevel = getUserLevel(prevVerified);   // always defined (min level 0)
+    const prevLevel = getUserLevel(prevVerified);
 
     setSubmitting(true);
     try {
@@ -417,24 +520,21 @@ export default function App() {
         amount: amt,
         status: 'Pending',
         createdAt: Date.now(),
-        submittedBy: user.uid,
+        submittedBy: u.uid,
       });
-      await setDoc(proofDoc(ref.id), { image: shot, submittedBy: user.uid, createdAt: Date.now() });
+      await setDoc(proofDoc(ref.id), { image: shot, submittedBy: u.uid, createdAt: Date.now() });
       setShot(''); setShotName(''); setShowDonate(false);
 
-      // Level counting includes this new (pending) amount
       const newTotal = prevVerified + amt;
       const newLevel = getUserLevel(newTotal);
       const levelsGained = newLevel.level - prevLevel.level;
 
       if (levelsGained > 0) {
-        // Award one credit per milestone crossed
         addCredits(clean, levelsGained);
         refreshHomeCredits();
-        // Open celebration modal — use the highest newly-unlocked level for the banner
         setMsgSenderName(clean);
         setModalHighestLevel(newLevel);
-        setMsgCreditsLeft(getCredits(clean)); // freshly updated
+        setMsgCreditsLeft(getCredits(clean));
         setMsgModalMode('celebration');
         setPihuMsg('');
         setShowMsgModal(true);
@@ -449,14 +549,11 @@ export default function App() {
     }
   };
 
-  // Open message modal from homescreen button
   const openMsgFromHome = () => {
-    const n = localStorage.getItem('pihu_donor_name') ?? '';
+    const n = lsGet('pihu_donor_name') ?? '';
     if (!n || getCredits(n) <= 0) return;
     setMsgSenderName(n);
-    // Show their current highest level
-    const myVerified = cumulativeByName[n] ?? 0;
-    setModalHighestLevel(getUserLevel(myVerified));
+    setModalHighestLevel(getUserLevel(cumulativeByName[n] ?? 0));
     setMsgCreditsLeft(getCredits(n));
     setMsgModalMode('credits');
     setPihuMsg('');
@@ -467,6 +564,7 @@ export default function App() {
     if (!pihuMsg.trim()) return;
     setSendingMsg(true);
     try {
+      if (!auth.currentUser) await signInAnonymously(auth);
       await addDoc(messagesCol(), {
         displayName: msgSenderName,
         message: pihuMsg.trim(),
@@ -480,14 +578,13 @@ export default function App() {
       const remaining = getCredits(msgSenderName);
 
       if (remaining > 0) {
-        // More credits — stay in modal, update count, clear text
         setMsgCreditsLeft(remaining);
-        setMsgModalMode('credits'); // switch to credits mode (no more celebration banner)
+        setMsgModalMode('credits');
         setPihuMsg('');
         notify(`Message sent! 🐾 You have ${remaining} credit${remaining > 1 ? 's' : ''} left.`);
       } else {
         setShowMsgModal(false);
-        notify(`Message sent to Pihu! 🐾`);
+        notify('Message sent to Pihu! 🐾');
       }
     } catch (err: any) {
       console.error('[sendPihuMessage]', err?.code, err?.message);
@@ -497,10 +594,9 @@ export default function App() {
     }
   };
 
-  // Skip: credits stay saved — donor can use them later from homescreen button
   const skipPihuMessage = () => {
     setShowMsgModal(false);
-    notify(`Donation submitted! 🐾 Pending review.`);
+    notify('Donation submitted! 🐾 Pending review.');
   };
 
   const verify = async (d: any) => {
@@ -521,10 +617,7 @@ export default function App() {
       notify(`Could not revert — ${err?.code ?? 'unknown error'}`, true);
     }
   };
-  const remove = (d: any) => {
-    // Show inline confirm row instead of window.confirm() (blocked in iframe contexts)
-    setConfirmDelete(d);
-  };
+  const remove = (d: any) => setConfirmDelete(d);
   const confirmRemove = async () => {
     if (!confirmDelete) return;
     const d = confirmDelete;
@@ -560,96 +653,124 @@ export default function App() {
   const catEmotion = getCatEmotion(amount);
   const myLevel = getUserLevel(myNewTotal);
 
-  const animatedVerified = useCountUp(stats.verified);
+  const inputCls =
+    'w-full px-4 py-3 rounded-xl bg-stone-50 border border-stone-200 text-base sm:text-sm focus:outline-none focus:border-stone-900';
 
   // ======================== RENDER ========================
   return (
     <div className="min-h-screen bg-[#faf7f2] text-stone-900 antialiased">
+      <style>{CSS}</style>
+
       {toast && (
-        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg ${toast.err ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'
-          }`}>
+        <div
+          className={`fixed left-1/2 -translate-x-1/2 z-[60] max-w-[92vw] text-center px-4 py-2.5 rounded-full text-sm font-medium shadow-lg bottom-[calc(5.5rem_+_env(safe-area-inset-bottom))] sm:bottom-6 ${
+            toast.err ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'
+          }`}
+        >
           {toast.msg}
         </div>
       )}
 
       {/* Header */}
-      <header className="max-w-3xl mx-auto px-5 h-16 flex items-center justify-between">
-        <button onClick={() => setView('board')} className="flex items-center gap-2.5 group text-left">
-          <span className="w-9 h-9 rounded-full bg-stone-900 overflow-hidden border border-stone-800 flex items-center justify-center shrink-0 shadow-sm">
-            <img
-              src="/pihu.jpg"
-              alt="Pihu"
-              className="w-full h-full object-cover object-[50%_20%] group-hover:scale-105 transition-transform duration-200"
-            />
-          </span>
-          <span className="font-bold tracking-tight">Pihu&apos;s Care Fund</span>
-        </button>
-        <div className="flex items-center gap-2">
-          {/* Message Pihu button — only if credits available */}
-          {homeCredits > 0 && (
-            <button
-              onClick={openMsgFromHome}
-              className="relative text-sm font-semibold px-3 py-2 rounded-full bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center gap-1.5 transition"
-            >
-              <MessageCircleHeart className="w-4 h-4" />
-              Message Pihu
-              <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] font-black bg-rose-500 text-white rounded-full flex items-center justify-center">
-                {homeCredits}
-              </span>
-            </button>
-          )}
-          <button
-            onClick={() => setView(view === 'admin' ? 'board' : 'admin')}
-            className="relative text-sm text-stone-500 hover:text-stone-900 px-3 py-2 rounded-lg flex items-center gap-1.5"
-          >
-            <Lock className="w-3.5 h-3.5" />
-            Admin
-            {isAdmin && pendingList.length > 0 && (
-              <span className="ml-0.5 text-[11px] font-bold bg-amber-400 text-stone-900 rounded-full px-1.5">
-                {pendingList.length}
-              </span>
+      <header className="sticky top-0 z-30 bg-[#faf7f2]/95 border-b border-stone-200/60 pt-[env(safe-area-inset-top)]">
+        <div className="max-w-3xl mx-auto px-4 sm:px-5 h-14 sm:h-16 flex items-center justify-between gap-2">
+          <button onClick={() => setView('board')} className="flex items-center gap-2.5 text-left min-w-0">
+            <span className="w-9 h-9 rounded-full bg-stone-900 overflow-hidden border border-stone-800 flex items-center justify-center shrink-0 shadow-sm">
+              <img
+                src="/pihu.jpg"
+                alt="Pihu"
+                width={36}
+                height={36}
+                decoding="async"
+                className="w-full h-full object-cover object-[50%_20%]"
+              />
+            </span>
+            <span className="font-bold tracking-tight truncate">Pihu&apos;s Care Fund</span>
+          </button>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {homeCredits > 0 && (
+              <button
+                onClick={openMsgFromHome}
+                aria-label="Message Pihu"
+                className="relative h-10 min-w-10 px-2.5 sm:px-3 rounded-full bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center gap-1.5 text-sm font-semibold transition"
+              >
+                <MessageCircleHeart className="w-4 h-4" />
+                <span className="hidden sm:inline">Message Pihu</span>
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 text-[10px] font-black bg-rose-500 text-white rounded-full flex items-center justify-center">
+                  {homeCredits}
+                </span>
+              </button>
             )}
-          </button>
-          <button
-            onClick={openDonate}
-            className="bg-stone-900 text-white text-sm font-semibold px-4 py-2 rounded-full hover:bg-stone-700 active:scale-95 transition"
-          >
-            Donate
-          </button>
+            <button
+              onClick={() => setView(view === 'admin' ? 'board' : 'admin')}
+              aria-label="Admin"
+              className="relative h-10 min-w-10 px-2.5 sm:px-3 rounded-full text-stone-500 hover:text-stone-900 hover:bg-stone-100 flex items-center justify-center gap-1.5 text-sm transition"
+            >
+              <Lock className="w-4 h-4" />
+              <span className="hidden sm:inline">Admin</span>
+              {isAdmin && pendingList.length > 0 && (
+                <span className="text-[11px] font-bold bg-amber-400 text-stone-900 rounded-full px-1.5">
+                  {pendingList.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={openDonate}
+              className="hidden sm:inline-flex bg-stone-900 text-white text-sm font-semibold px-4 h-10 items-center rounded-full hover:bg-stone-700 active:scale-95 transition"
+            >
+              Donate
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-5 pb-24 space-y-6">
+      <main className="max-w-3xl mx-auto px-4 sm:px-5 pt-4 sm:pt-6 pb-28 sm:pb-16 space-y-4 sm:space-y-6">
         {view === 'board' ? (
           <>
             {/* Hero + progress */}
-            <section className="bg-white rounded-3xl border border-stone-200 p-6 sm:p-8">
-              <p className="text-xs font-semibold tracking-widest uppercase text-amber-600">Pihu&apos;s Care Fund · Progress</p>
-              <div className="mt-2 flex items-end justify-between gap-4 flex-wrap">
-                <div className="flex items-end gap-3 flex-wrap">
-                  <h1 className="text-4xl sm:text-5xl font-black tracking-tight">
-                    {inr(animatedVerified)}
-                  </h1>
-                  {stats.pending > 0 && (
-                    <span className="mb-1.5 flex items-center gap-1 text-stone-400 text-base font-semibold">
-                      <span className="text-lg font-black">+</span>
-                      <span className="font-mono">{inr(stats.pending)}</span>
-                      <span className="text-xs font-medium ml-0.5">(pending)</span>
-                    </span>
-                  )}
-                </div>
-                <span className="text-sm text-stone-400">collected</span>
+            <section className="bg-white rounded-3xl border border-stone-200 p-5 sm:p-8">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-bold tracking-widest uppercase text-amber-600">Raised for Pihu</p>
+                {live.pending > 0 && (
+                  <span className="text-[11px] font-semibold text-stone-500 bg-stone-100 rounded-full px-2 py-0.5 flex items-center gap-1">
+                    <Clock className="w-3 h-3" /> +{inr(live.pending)} pending
+                  </span>
+                )}
               </div>
-              <GoalBars verified={stats.verified} pending={stats.pending} />
+
+              <div className="mt-2">
+                {loading && !cachedStats.ok ? (
+                  <div className="h-12 w-44 rounded-xl bg-stone-100 animate-pulse" />
+                ) : (
+                  <h1 className="text-5xl font-black tracking-tight tabular-nums">
+                    <AnimatedAmount value={live.verified} initial={0} />
+                  </h1>
+                )}
+                <p className="text-sm text-stone-500 mt-1.5">
+                  {nextGoal ? (
+                    <>
+                      <b className="text-stone-800">{inr(nextGoal.amount - live.verified)}</b> to unlock{' '}
+                      <b className="text-stone-800">{nextGoal.label}</b>
+                    </>
+                  ) : (
+                    'Every goal cleared. Legends. 🎉'
+                  )}
+                </p>
+              </div>
+
+              <GoalBars verified={live.verified} pending={live.pending} />
             </section>
 
-            {/* Donor levels legend */}
+            {/* Donor levels */}
             <section className="bg-white rounded-3xl border border-stone-200 p-5 sm:p-6">
-              <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-3">Donor Levels</p>
-              <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+              <p className="text-[11px] font-bold tracking-widest uppercase text-stone-400 mb-3">Donor Levels</p>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {USER_LEVELS.map((lvl) => (
-                  <div key={lvl.level} className={`rounded-2xl p-3 border text-left ${lvl.level === 0 ? 'bg-stone-50 border-stone-200 opacity-60' : 'bg-stone-50 border-stone-100'
-                    }`}>
+                  <div
+                    key={lvl.level}
+                    className={`rounded-2xl p-3 border text-left bg-stone-50 ${lvl.level === 0 ? 'border-stone-200 opacity-60' : 'border-stone-100'}`}
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-black tracking-wider text-stone-400">
                         {lvl.level === 0 ? 'START' : `LVL ${lvl.level}`}
@@ -657,16 +778,20 @@ export default function App() {
                       <span>{lvl.icon}</span>
                     </div>
                     <div className="font-bold mt-1 text-sm">{lvl.level === 0 ? '₹0' : inr(lvl.amount)}</div>
-                    <div className="text-xs font-semibold text-stone-700">{lvl.title}</div>
+                    <div className="text-xs font-semibold text-stone-700 leading-tight">{lvl.title}</div>
                   </div>
                 ))}
               </div>
               <div className="mt-4 border-t border-stone-100 pt-4">
-                <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-2">Donor Titles</p>
-                <div className="flex flex-wrap gap-2">
+                <p className="text-[11px] font-bold tracking-widest uppercase text-stone-400 mb-2">Donor Titles</p>
+                <div className="flex flex-wrap gap-1.5">
                   {TITLES.map((t) => (
-                    <span key={t.title} className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${t.perks ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-600'
-                      }`}>
+                    <span
+                      key={t.title}
+                      className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
+                        t.perks ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-600'
+                      }`}
+                    >
                       {t.icon} {t.title} {t.perks ? '⭐' : ''}
                     </span>
                   ))}
@@ -679,12 +804,20 @@ export default function App() {
 
             {/* Leaderboard */}
             <section className="bg-white rounded-3xl border border-stone-200 overflow-hidden">
-              <div className="p-5 sm:px-6 flex items-center justify-between gap-3 border-b border-stone-100">
-                <h2 className="font-bold text-lg">Leaderboard</h2>
-                <div className="inline-flex bg-stone-100 rounded-full p-1 text-xs font-semibold">
+              <div className="px-5 sm:px-6 py-4 flex items-center justify-between gap-3 border-b border-stone-100">
+                <div>
+                  <h2 className="font-bold text-lg leading-tight">Leaderboard</h2>
+                  {!loading && leaderboard.length > 0 && (
+                    <p className="text-xs text-stone-400">{leaderboard.length} donor{leaderboard.length !== 1 ? 's' : ''}</p>
+                  )}
+                </div>
+                <div className="inline-flex bg-stone-100 rounded-full p-1 text-xs font-semibold shrink-0">
                   {(['amount', 'recent'] as const).map((k) => (
-                    <button key={k} onClick={() => setSortBy(k)}
-                      className={`px-3 py-1.5 rounded-full transition ${sortBy === k ? 'bg-white shadow text-stone-900' : 'text-stone-500'}`}>
+                    <button
+                      key={k}
+                      onClick={() => setSortBy(k)}
+                      className={`px-3.5 py-2 rounded-full transition ${sortBy === k ? 'bg-white shadow text-stone-900' : 'text-stone-500'}`}
+                    >
                       {k === 'amount' ? 'Top' : 'Latest'}
                     </button>
                   ))}
@@ -692,96 +825,123 @@ export default function App() {
               </div>
 
               {loading ? (
-                <p className="p-10 text-center text-sm text-stone-400">Loading…</p>
+                <ul className="divide-y divide-stone-100">
+                  {[0, 1, 2].map((i) => (
+                    <li key={i} className="px-5 sm:px-6 py-4 flex items-center gap-3 animate-pulse">
+                      <div className="w-7 h-4 rounded bg-stone-100" />
+                      <div className="w-10 h-10 rounded-full bg-stone-100" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 w-1/3 rounded bg-stone-100" />
+                        <div className="h-2.5 w-1/2 rounded bg-stone-100" />
+                      </div>
+                      <div className="h-4 w-14 rounded bg-stone-100" />
+                    </li>
+                  ))}
+                </ul>
               ) : leaderboard.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="text-4xl mb-2">🐱</div>
                   <p className="font-bold">No donations yet</p>
                   <p className="text-sm text-stone-500 mb-4">Claim the #1 spot.</p>
-                  <button onClick={openDonate} className="bg-stone-900 text-white text-sm font-semibold px-5 py-2.5 rounded-full">
+                  <button onClick={openDonate} className="bg-stone-900 text-white text-sm font-semibold px-5 py-3 rounded-full">
                     Be first
                   </button>
                 </div>
               ) : (
-                <ul className="divide-y divide-stone-100">
-                  {leaderboard.map((d, i) => {
-                    const t = getTitle(d.verifiedAmount);
-                    const medal = sortBy === 'amount' ? ['🥇', '🥈', '🥉'][i] : undefined;
-                    const lvl = getUserLevel(d.verifiedAmount);
-                    return (
-                      <li key={d.displayName} className="px-5 sm:px-6 py-4 flex items-center gap-4">
-                        <div className="w-8 text-center font-bold text-stone-400 shrink-0">
-                          {medal ?? <span className="text-sm">{i + 1}</span>}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold truncate">{d.displayName}</div>
-                          <div className="text-xs text-stone-500 flex items-center gap-1 flex-wrap">
-                            <span>{t.icon} {t.title}</span>
-                            {lvl && lvl.level > 0 && (
-                              <span className="px-1.5 py-0.5 bg-stone-100 rounded-md font-semibold text-stone-500">
-                                LVL {lvl.level} {lvl.icon}
-                              </span>
-                            )}
+                <>
+                  <ul className="divide-y divide-stone-100">
+                    {visibleBoard.map((d, i) => {
+                      const t = getTitle(d.verifiedAmount);
+                      const lvl = getUserLevel(d.verifiedAmount);
+                      const medal = sortBy === 'amount' ? ['🥇', '🥈', '🥉'][i] : undefined;
+                      const top = sortBy === 'amount' && i === 0 && d.verifiedAmount > 0;
+                      return (
+                        <li
+                          key={d.displayName}
+                          className={`px-4 sm:px-6 py-3.5 flex items-center gap-3 ${top ? 'bg-amber-50/60' : ''}`}
+                        >
+                          <div className="w-7 text-center font-bold text-stone-400 shrink-0">
+                            {medal ?? <span className="text-sm">{i + 1}</span>}
                           </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="font-black font-mono">{inr(d.verifiedAmount)}</div>
-                          {d.totalAmount > d.verifiedAmount && (
-                            <div className="text-[11px] font-semibold text-stone-400 flex items-center justify-end gap-0.5">
-                              <span className="font-black">+</span>{inr(d.totalAmount - d.verifiedAmount)}
-                              <Clock className="w-3 h-3 ml-0.5" />
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${avatarStyle(d.displayName)}`}
+                          >
+                            {d.displayName.trim().charAt(0).toUpperCase() || '?'}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold truncate">{d.displayName}</div>
+                            <div className="text-xs text-stone-500 flex items-center gap-1.5 flex-wrap">
+                              <span className="truncate">{t.icon} {t.title}</span>
+                              {lvl.level > 0 && (
+                                <span className="px-1.5 py-0.5 bg-stone-100 rounded-md font-semibold text-stone-500 shrink-0">
+                                  LVL {lvl.level} {lvl.icon}
+                                </span>
+                              )}
                             </div>
-                          )}
-                          {d.verifiedAmount > 0 && (
-                            <div className="text-[11px] font-semibold text-emerald-600 flex items-center justify-end gap-1">
-                              <BadgeCheck className="w-3.5 h-3.5" /> Verified
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-black font-mono tabular-nums">{inr(d.verifiedAmount)}</div>
+                            {d.totalAmount > d.verifiedAmount ? (
+                              <div className="text-[11px] font-semibold text-stone-400 flex items-center justify-end gap-0.5">
+                                <span className="font-black">+</span>{inr(d.totalAmount - d.verifiedAmount)}
+                                <Clock className="w-3 h-3 ml-0.5" />
+                              </div>
+                            ) : d.verifiedAmount > 0 ? (
+                              <div className="text-[11px] font-semibold text-emerald-600 flex items-center justify-end gap-1">
+                                <BadgeCheck className="w-3.5 h-3.5" /> Verified
+                              </div>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {leaderboard.length > 15 && (
+                    <button
+                      onClick={() => setShowAll((s) => !s)}
+                      className="w-full py-3.5 text-sm font-semibold text-stone-500 hover:text-stone-900 border-t border-stone-100"
+                    >
+                      {showAll ? 'Show less' : `Show all ${leaderboard.length}`}
+                    </button>
+                  )}
+                </>
               )}
             </section>
           </>
         ) : !isAdmin ? (
-          /* Admin login */
-          <section className="max-w-sm mx-auto bg-white rounded-3xl border border-stone-200 p-7 mt-6">
+          <section className="max-w-sm mx-auto bg-white rounded-3xl border border-stone-200 p-6 sm:p-7 mt-2">
             <h2 className="text-xl font-bold">Admin login</h2>
             <p className="text-sm text-stone-500 mb-5">Review proofs and verify donations.</p>
             <form onSubmit={login} className="space-y-3">
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email"
-                className="w-full px-4 py-2.5 rounded-xl bg-stone-50 border border-stone-200 text-sm focus:outline-none focus:border-stone-900" />
+                autoComplete="email" className={inputCls} />
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password"
-                className="w-full px-4 py-2.5 rounded-xl bg-stone-50 border border-stone-200 text-sm focus:outline-none focus:border-stone-900" />
+                autoComplete="current-password" className={inputCls} />
               {loginErr && <p className="text-xs text-rose-600">{loginErr}</p>}
-              <button className="w-full bg-stone-900 text-white font-semibold py-2.5 rounded-xl text-sm">Sign in</button>
+              <button className="w-full bg-stone-900 text-white font-semibold py-3 rounded-xl text-sm">Sign in</button>
             </form>
           </section>
         ) : (
-          /* Admin panel */
-          <section className="space-y-6">
+          <section className="space-y-4 sm:space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold">Admin</h2>
-              <button onClick={logout} className="text-sm text-stone-500 hover:text-stone-900 flex items-center gap-1.5">
+              <button onClick={logout} className="text-sm text-stone-500 hover:text-stone-900 flex items-center gap-1.5 py-2">
                 <LogOut className="w-4 h-4" /> Sign out
               </button>
             </div>
 
-            {/* Tab bar */}
             <div className="inline-flex bg-stone-100 rounded-full p-1 text-xs font-semibold gap-1">
               <button onClick={() => setAdminTab('queue')}
-                className={`px-4 py-1.5 rounded-full transition flex items-center gap-1.5 ${adminTab === 'queue' ? 'bg-white shadow text-stone-900' : 'text-stone-500'}`}>
+                className={`px-4 py-2 rounded-full transition flex items-center gap-1.5 ${adminTab === 'queue' ? 'bg-white shadow text-stone-900' : 'text-stone-500'}`}>
                 Review queue
                 {pendingList.length > 0 && (
                   <span className="bg-amber-400 text-stone-900 rounded-full px-1.5 text-[10px] font-black">{pendingList.length}</span>
                 )}
               </button>
               <button onClick={() => setAdminTab('messages')}
-                className={`px-4 py-1.5 rounded-full transition flex items-center gap-1.5 ${adminTab === 'messages' ? 'bg-white shadow text-stone-900' : 'text-stone-500'}`}>
+                className={`px-4 py-2 rounded-full transition flex items-center gap-1.5 ${adminTab === 'messages' ? 'bg-white shadow text-stone-900' : 'text-stone-500'}`}>
                 <MessageCircleHeart className="w-3.5 h-3.5" />
-                Messages to Pihu
+                Messages
                 {messages.length > 0 && (
                   <span className="bg-rose-400 text-white rounded-full px-1.5 text-[10px] font-black">{messages.length}</span>
                 )}
@@ -791,44 +951,44 @@ export default function App() {
             {adminTab === 'queue' ? (
               <>
                 <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-stone-100 font-bold">Pending ({pendingList.length})</div>
+                  <div className="px-5 sm:px-6 py-4 border-b border-stone-100 font-bold">Pending ({pendingList.length})</div>
                   {pendingList.length === 0 ? (
                     <p className="p-10 text-center text-sm text-stone-400">All caught up.</p>
                   ) : (
                     <ul className="divide-y divide-stone-100">
                       {pendingList.map((d) => (
-                        <li key={d.id} className="p-5 flex items-center gap-4 flex-wrap">
+                        <li key={d.id} className="p-4 sm:p-5 flex items-center gap-3 sm:gap-4 flex-wrap">
                           <button onClick={() => setPreview(d)}
                             className="w-14 h-[72px] rounded-xl overflow-hidden bg-stone-100 border border-stone-200 shrink-0">
                             {proofs[d.id]
                               ? <img src={proofs[d.id]} alt="proof" className="w-full h-full object-cover" />
                               : <Eye className="w-4 h-4 m-auto text-stone-400" />}
                           </button>
-                          <div className="flex-1 min-w-[140px]">
-                            <div className="font-bold">{d.displayName}</div>
+                          <div className="flex-1 min-w-[120px]">
+                            <div className="font-bold truncate">{d.displayName}</div>
                             <div className="font-mono font-black text-amber-600">{inr(d.amount)}</div>
                             <div className="text-xs text-stone-500">{timeAgo(d.createdAt)}</div>
                           </div>
                           {confirmDelete?.id === d.id ? (
-                            <div className="flex items-center gap-2 flex-wrap">
+                            <div className="w-full sm:w-auto flex items-center gap-3 flex-wrap">
                               <span className="text-xs text-stone-500 font-medium">Delete?</span>
                               <button onClick={confirmRemove}
-                                className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                                className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-4 py-2.5 rounded-full">
                                 Yes, delete
                               </button>
                               <button onClick={() => setConfirmDelete(null)}
-                                className="text-xs text-stone-500 hover:text-stone-800 underline">
+                                className="text-xs text-stone-500 hover:text-stone-800 underline py-2">
                                 Cancel
                               </button>
                             </div>
                           ) : (
-                            <div className="flex gap-2">
+                            <div className="w-full sm:w-auto grid grid-cols-2 gap-2">
                               <button onClick={() => verify(d)}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-full">
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-5 py-2.5 rounded-full">
                                 Verify
                               </button>
                               <button onClick={() => remove(d)}
-                                className="bg-rose-50 text-rose-600 text-xs font-bold px-4 py-2 rounded-full hover:bg-rose-100">
+                                className="bg-rose-50 text-rose-600 text-sm font-bold px-5 py-2.5 rounded-full hover:bg-rose-100">
                                 Reject
                               </button>
                             </div>
@@ -840,32 +1000,31 @@ export default function App() {
                 </div>
 
                 <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-stone-100 flex justify-between font-bold">
+                  <div className="px-5 sm:px-6 py-4 border-b border-stone-100 flex justify-between font-bold">
                     <span>Verified ({verifiedList.length})</span>
                     <span className="text-stone-400 text-sm font-semibold">{inr(stats.verified)}</span>
                   </div>
                   <ul className="divide-y divide-stone-100 text-sm">
                     {verifiedList.map((d) => (
-                      <li key={d.id} className="px-6 py-3 flex items-center justify-between gap-3">
+                      <li key={d.id} className="px-4 sm:px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
                         <div className="min-w-0 flex items-center gap-3">
-                          <button onClick={() => setPreview(d)} className="text-stone-400 hover:text-stone-900">
+                          <button onClick={() => setPreview(d)} aria-label="View proof"
+                            className="text-stone-400 hover:text-stone-900 p-1.5 -m-1.5">
                             <Eye className="w-4 h-4" />
                           </button>
                           <span className="font-semibold truncate">{d.displayName}</span>
                           <span className="font-mono text-emerald-600 font-bold">{inr(d.amount)}</span>
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
-                          <button onClick={() => revert(d)} className="text-xs text-stone-500 hover:text-amber-600">Un-verify</button>
+                          <button onClick={() => revert(d)} className="text-xs text-stone-500 hover:text-amber-600 py-2">Un-verify</button>
                           {confirmDelete?.id === d.id ? (
                             <>
                               <span className="text-xs text-stone-500 font-medium">Delete?</span>
-                              <button onClick={confirmRemove}
-                                className="text-xs font-bold text-rose-600 hover:text-rose-800 underline">Yes</button>
-                              <button onClick={() => setConfirmDelete(null)}
-                                className="text-xs text-stone-400 hover:text-stone-700 underline">No</button>
+                              <button onClick={confirmRemove} className="text-xs font-bold text-rose-600 hover:text-rose-800 underline py-2">Yes</button>
+                              <button onClick={() => setConfirmDelete(null)} className="text-xs text-stone-400 hover:text-stone-700 underline py-2">No</button>
                             </>
                           ) : (
-                            <button onClick={() => remove(d)} className="text-rose-500 hover:text-rose-700">
+                            <button onClick={() => remove(d)} aria-label="Delete" className="text-rose-500 hover:text-rose-700 p-2 -m-2">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           )}
@@ -876,9 +1035,8 @@ export default function App() {
                 </div>
               </>
             ) : (
-              /* Messages DM inbox */
               <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-stone-100 font-bold flex items-center gap-2">
+                <div className="px-5 sm:px-6 py-4 border-b border-stone-100 font-bold flex items-center gap-2">
                   <MessageCircleHeart className="w-4 h-4 text-rose-500" />
                   Messages to Pihu ({messages.length})
                 </div>
@@ -890,7 +1048,7 @@ export default function App() {
                 ) : (
                   <ul className="divide-y divide-stone-100">
                     {messages.map((m: any) => (
-                      <li key={m.id} className="px-6 py-4">
+                      <li key={m.id} className="px-5 sm:px-6 py-4">
                         <div className="flex items-start gap-3">
                           <div className="w-9 h-9 rounded-xl bg-stone-100 flex items-center justify-center text-lg shrink-0">
                             {m.levelIcon ?? '🐾'}
@@ -903,7 +1061,7 @@ export default function App() {
                               </span>
                               <span className="text-[11px] text-stone-400">{timeAgo(m.createdAt)}</span>
                             </div>
-                            <p className="mt-1.5 text-sm text-stone-700 bg-stone-50 rounded-2xl rounded-tl-sm px-4 py-2.5 border border-stone-100">
+                            <p className="mt-1.5 text-sm text-stone-700 bg-stone-50 rounded-2xl rounded-tl-sm px-4 py-2.5 border border-stone-100 break-words">
                               {m.message}
                             </p>
                           </div>
@@ -918,21 +1076,32 @@ export default function App() {
         )}
       </main>
 
-      {/* ===== Donate Modal ===== */}
-      {showDonate && (
-        <div className="fixed inset-0 z-40 bg-stone-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[94vh] overflow-y-auto">
+      {/* Mobile sticky donate CTA */}
+      {view === 'board' && !anyModal && (
+        <div className="sm:hidden fixed bottom-0 inset-x-0 z-30 px-4 pt-6 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] bg-gradient-to-t from-[#faf7f2] via-[#faf7f2]/90 to-transparent pointer-events-none">
+          <button
+            onClick={openDonate}
+            className="pointer-events-auto w-full bg-stone-900 text-white font-bold py-3.5 rounded-2xl text-base shadow-lg active:scale-[0.98] transition-transform"
+          >
+            🐾 Donate for Pihu
+          </button>
+        </div>
+      )}
 
-            {/* Step 1: Name */}
+      {/* ===== Donate Sheet ===== */}
+      {showDonate && (
+        <div className="fixed inset-0 z-40 bg-stone-900/50 sm:backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl max-h-[calc(100dvh_-_1.5rem)] flex flex-col overflow-hidden">
+
             {donateStep === 'name' && (
-              <>
-                <div className="flex items-center justify-between mb-6">
+              <div className="overflow-y-auto overscroll-contain p-5 pb-[calc(1.25rem_+_env(safe-area-inset-bottom))]">
+                <div className="flex items-center justify-between mb-5">
                   <h3 className="text-lg font-bold">Who&apos;s donating? 🐾</h3>
-                  <button onClick={() => setShowDonate(false)} className="text-stone-400 hover:text-stone-900">
+                  <button onClick={() => setShowDonate(false)} aria-label="Close" className="text-stone-400 hover:text-stone-900 p-2 -m-2">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
-                <div className="text-center mb-6">
+                <div className="text-center mb-5">
                   <div className="text-6xl mb-2">😿</div>
                   <p className="text-stone-500 text-sm">Pihu is waiting to know your name~</p>
                 </div>
@@ -941,7 +1110,7 @@ export default function App() {
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && proceedToAmount()}
                   placeholder="Your display name (e.g. Wing_B_Legend)"
-                  className="w-full px-4 py-3 rounded-xl bg-stone-50 border border-stone-200 text-sm focus:outline-none focus:border-stone-900 mb-4"
+                  className={`${inputCls} mb-3`}
                 />
                 {name.trim() && (
                   <p className="text-xs text-stone-400 mb-4">
@@ -952,54 +1121,53 @@ export default function App() {
                   </p>
                 )}
                 <button onClick={proceedToAmount}
-                  className="w-full bg-stone-900 text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                  className="w-full bg-stone-900 text-white font-semibold py-3.5 rounded-xl text-base sm:text-sm flex items-center justify-center gap-2">
                   Continue <ChevronRight className="w-4 h-4" />
                 </button>
-              </>
+              </div>
             )}
 
-            {/* Step 2: Amount + Screenshot */}
             {donateStep === 'amount' && (
-              <>
-                <div className="flex items-center justify-between mb-5">
-                  <button onClick={() => setDonateStep('name')}
-                    className="text-stone-400 hover:text-stone-900 text-sm flex items-center gap-1">
-                    ← {name.trim()}
-                  </button>
-                  <h3 className="text-base font-bold">Donate for Pihu</h3>
-                  <button onClick={() => setShowDonate(false)} className="text-stone-400 hover:text-stone-900">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* UPI */}
-                <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 mb-5 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400">1 · Pay via UPI</div>
-                      <div className="font-mono font-bold truncate">{UPI_ID}</div>
-                    </div>
-                    <button type="button" onClick={copyUpi}
-                      className="text-xs font-semibold bg-white border border-stone-200 hover:bg-stone-100 rounded-full px-3 py-1.5 flex items-center gap-1.5 shrink-0 transition">
-                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copied ? 'Copied' : 'Copy'}
+              <form onSubmit={submit} className="flex flex-col min-h-0 flex-1">
+                <div className="overflow-y-auto overscroll-contain px-5 pt-4 pb-4 space-y-5 flex-1">
+                  <div className="flex items-center justify-between">
+                    <button type="button" onClick={() => setDonateStep('name')}
+                      className="text-stone-500 hover:text-stone-900 text-sm flex items-center gap-1 py-2 -my-2 max-w-[40%] truncate">
+                      ← {name.trim()}
+                    </button>
+                    <h3 className="text-base font-bold">Donate for Pihu</h3>
+                    <button type="button" onClick={() => setShowDonate(false)} aria-label="Close"
+                      className="text-stone-400 hover:text-stone-900 p-2 -m-2">
+                      <X className="w-5 h-5" />
                     </button>
                   </div>
-                  <a
-                    href={`upi://pay?pa=${UPI_ID}&pn=DONATE TO PIHU&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
-                    id="__UPI_BUTTON__"
-                    className="w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-stone-950 font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm tracking-wide transition border border-amber-600/20 shadow-sm"
-                  >
-                    PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
-                  </a>
-                </div>
 
-                <form onSubmit={submit} className="space-y-5">
-                  <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400">2 · Choose amount</div>
+                  {/* UPI */}
+                  <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400">1 · Pay via UPI</div>
+                        <div className="font-mono font-bold truncate">{UPI_ID}</div>
+                      </div>
+                      <button type="button" onClick={copyUpi}
+                        className="text-xs font-semibold bg-white border border-stone-200 hover:bg-stone-100 rounded-full px-3.5 py-2 flex items-center gap-1.5 shrink-0 transition">
+                        {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <a
+                      href={`upi://pay?pa=${UPI_ID}&pn=${encodeURIComponent('DONATE TO PIHU')}&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
+                      id="__UPI_BUTTON__"
+                      className="w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-stone-950 font-bold py-3 px-4 rounded-xl text-sm tracking-wide transition border border-amber-600/20 shadow-sm"
+                    >
+                      PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
+                    </a>
+                  </div>
 
-                  {/* Cat emotion + editable amount */}
+                  <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400 -mb-2">2 · Choose amount</div>
+
                   <div className="flex items-center gap-4 bg-stone-50 rounded-2xl p-4 border border-stone-100">
-                    <div className="text-5xl transition-all duration-300 select-none">{catEmotion.emoji}</div>
+                    <div className="text-5xl select-none">{catEmotion.emoji}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-0.5">
                         <span className="text-3xl font-black font-mono text-stone-400 select-none">₹</span>
@@ -1016,46 +1184,41 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Slider */}
                   <div>
-                    <style>{`
-                      .pihu-slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:9999px;background:#e7e5e4;outline:none;cursor:pointer;}
-                      .pihu-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:22px;height:22px;border-radius:50%;background:#1c1917;cursor:pointer;border:3px solid white;box-shadow:0 0 0 2px #1c1917;transition:transform 0.1s;}
-                      .pihu-slider::-webkit-slider-thumb:hover{transform:scale(1.15);}
-                      .pihu-slider::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:#1c1917;cursor:pointer;border:3px solid white;box-shadow:0 0 0 2px #1c1917;}
-                    `}</style>
                     <input type="range" min={0} max={5000} step={1} value={sliderRaw}
                       onChange={(e) => handleSliderChange(Number(e.target.value))}
+                      aria-label="Donation amount"
                       className="pihu-slider" />
-                    <div className="flex justify-between text-[11px] text-stone-400 mt-1">
+                    <div className="flex justify-between text-[11px] text-stone-400">
                       <span>₹0</span><span>₹5,000</span>
                     </div>
                   </div>
 
-                  {/* Per-user milestone progress */}
                   <div>
                     <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-400 mb-2">Your Level Progress</p>
-                    <div className="flex gap-1.5 flex-wrap">
+                    <div className="grid grid-cols-6 gap-1.5">
                       {USER_LEVELS.map((lvl) => {
                         const reached = myNewTotal >= lvl.amount;
-                        const isCurrent = myLevel?.level === lvl.level;
+                        const isCurrent = myLevel.level === lvl.level;
                         return (
-                          <div key={lvl.level} className={`flex-1 min-w-[48px] rounded-xl p-2 border text-center transition-all ${reached ? 'bg-amber-50 border-amber-300' : 'bg-stone-50 border-stone-100 opacity-40'
-                            } ${isCurrent ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}>
+                          <div
+                            key={lvl.level}
+                            className={`rounded-xl py-2 px-1 border text-center transition-colors ${
+                              reached ? 'bg-amber-50 border-amber-300' : 'bg-stone-50 border-stone-100 opacity-40'
+                            } ${isCurrent ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+                          >
                             <div className="text-base">{lvl.icon}</div>
                             <div className="text-[9px] font-bold text-stone-400">
                               {lvl.level === 0 ? 'START' : `LVL ${lvl.level}`}
                             </div>
-                            <div className="text-[9px] font-semibold text-stone-700 leading-tight">{lvl.title}</div>
+                            <div className="hidden sm:block text-[9px] font-semibold text-stone-700 leading-tight">{lvl.title}</div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* Title preview */}
-                  <div className={`rounded-2xl p-3 border text-center ${currentTitle.perks ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'
-                    }`}>
+                  <div className={`rounded-2xl p-3 border text-center ${currentTitle.perks ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'}`}>
                     <div className="text-2xl mb-0.5">{currentTitle.icon}</div>
                     <div className="font-bold text-sm">{currentTitle.title}</div>
                     <div className="text-xs text-stone-500 mt-0.5">
@@ -1070,7 +1233,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Screenshot upload */}
                   <div>
                     <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400 mb-2">3 · Upload screenshot</div>
                     <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
@@ -1089,48 +1251,48 @@ export default function App() {
                           <div className="text-xs text-emerald-700">Attached ✓</div>
                         </div>
                         <button type="button" onClick={() => { setShot(''); setShotName(''); }}
-                          className="text-xs text-stone-500 underline">
+                          className="text-xs text-stone-500 underline py-2 px-1">
                           Change
                         </button>
                       </div>
                     )}
                   </div>
 
-                  <div className="text-xs font-mono text-stone-500 bg-stone-50 rounded-xl px-3 py-2">
+                  <div className="text-xs font-mono text-stone-500 bg-stone-50 rounded-xl px-3 py-2 break-words">
                     {name.trim() || 'Your_Name'} | {inr(amount)} | Status: Pending
                   </div>
+                </div>
 
+                {/* Sticky submit: always reachable, never buried under the scroll */}
+                <div className="shrink-0 border-t border-stone-100 bg-white px-5 pt-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))]">
                   <button disabled={submitting || amount <= 0}
-                    className="w-full bg-stone-900 text-white font-semibold py-3 rounded-xl text-sm disabled:opacity-50">
+                    className="w-full bg-stone-900 text-white font-semibold py-3.5 rounded-xl text-base sm:text-sm disabled:opacity-50">
                     {submitting ? 'Submitting…' : `Submit ${inr(amount)} for Pihu 🐾`}
                   </button>
-                </form>
-              </>
+                </div>
+              </form>
             )}
           </div>
         </div>
       )}
 
-      {/* ===== Message to Pihu Modal ===== */}
+      {/* ===== Message to Pihu Sheet ===== */}
       {showMsgModal && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="fixed inset-0 z-50 bg-stone-900/60 sm:backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4">
+          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 pb-[calc(1.25rem_+_env(safe-area-inset-bottom))] max-h-[92dvh] overflow-y-auto overscroll-contain">
+            <div className="mx-auto -mt-2 mb-3 h-1 w-10 rounded-full bg-stone-200 sm:hidden" />
 
-            {/* Celebration banner — only on first open after a new milestone */}
             {msgModalMode === 'celebration' && (
               <div className="text-center mb-5">
-                <div className="text-5xl mb-2 animate-bounce">{modalHighestLevel.icon}</div>
+                <div className="text-5xl mb-2 pihu-pop inline-block">{modalHighestLevel.icon}</div>
                 <h3 className="text-xl font-black">New Milestone Unlocked!</h3>
                 <p className="text-sm text-stone-500 mt-1">
                   You&apos;ve reached{' '}
-                  <b className="text-amber-600">
-                    Level {modalHighestLevel.level} — {modalHighestLevel.title}
-                  </b>!
+                  <b className="text-amber-600">Level {modalHighestLevel.level} — {modalHighestLevel.title}</b>!
                 </p>
               </div>
             )}
 
-            {/* Credits mode header */}
             {msgModalMode === 'credits' && (
               <div className="flex items-center justify-between mb-5">
                 <div className="flex items-center gap-2">
@@ -1140,14 +1302,13 @@ export default function App() {
                     <p className="text-xs text-stone-500">as {msgSenderName}</p>
                   </div>
                 </div>
-                <button onClick={() => setShowMsgModal(false)} className="text-stone-400 hover:text-stone-900">
+                <button onClick={() => setShowMsgModal(false)} aria-label="Close" className="text-stone-400 hover:text-stone-900 p-2 -m-2">
                   <X className="w-5 h-5" />
                 </button>
               </div>
             )}
 
-            {/* Credits remaining pill */}
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-4 flex-wrap">
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-600 flex items-center gap-1">
                 <MessageCircleHeart className="w-3 h-3" />
                 {msgCreditsLeft} message credit{msgCreditsLeft !== 1 ? 's' : ''} remaining
@@ -1165,22 +1326,21 @@ export default function App() {
                 maxLength={280}
                 rows={3}
                 placeholder="Hey Pihu! Hope you enjoy your treats… 🐾"
-                className="w-full px-4 py-3 rounded-xl bg-stone-50 border border-stone-200 text-sm focus:outline-none focus:border-stone-900 resize-none"
+                className={`${inputCls} resize-none`}
               />
               <div className="text-[11px] text-stone-400 text-right">{pihuMsg.length}/280</div>
 
               <button
                 onClick={sendPihuMessage}
                 disabled={sendingMsg || !pihuMsg.trim()}
-                className="w-full bg-stone-900 text-white font-semibold py-3 rounded-xl text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full bg-stone-900 text-white font-semibold py-3.5 rounded-xl text-base sm:text-sm disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Send className="w-4 h-4" />
                 {sendingMsg ? 'Sending…' : 'Send message to Pihu 🐾'}
               </button>
 
-              {/* Skip saves credits for later */}
               <button onClick={skipPihuMessage}
-                className="w-full text-stone-400 text-sm py-2 hover:text-stone-700 transition">
+                className="w-full text-stone-400 text-sm py-3 hover:text-stone-700 transition">
                 Save for later — use from homescreen
               </button>
             </div>
@@ -1191,23 +1351,26 @@ export default function App() {
       {/* Proof lightbox (admin only) */}
       {preview && (
         <div onClick={() => setPreview(null)}
-          className="fixed inset-0 z-50 bg-stone-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-3xl p-5 w-full max-w-sm space-y-4">
+          className="fixed inset-0 z-50 bg-stone-900/70 sm:backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl p-5 w-full max-w-sm space-y-4 max-h-[92dvh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <div>
                 <div className="font-bold">{preview.displayName}</div>
                 <div className="text-sm text-stone-500">{inr(preview.amount)} · {preview.status}</div>
               </div>
-              <button onClick={() => setPreview(null)}><X className="w-5 h-5 text-stone-400" /></button>
+              <button onClick={() => setPreview(null)} aria-label="Close" className="p-2 -m-2">
+                <X className="w-5 h-5 text-stone-400" />
+              </button>
             </div>
-            <div className="rounded-2xl bg-stone-100 overflow-hidden flex items-center justify-center max-h-[60vh]">
+            <div className="rounded-2xl bg-stone-100 overflow-hidden flex items-center justify-center max-h-[55dvh]">
               {isAdmin && proofs[preview.id]
-                ? <img src={proofs[preview.id]} alt="proof" className="max-h-[58vh] object-contain" />
+                ? <img src={proofs[preview.id]} alt="proof" className="max-h-[55dvh] object-contain" />
                 : <p className="p-10 text-sm text-stone-400">No proof available</p>}
             </div>
             {preview.status !== 'Verified' && (
               <button onClick={() => { verify(preview); setPreview(null); }}
-                className="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-sm">
+                className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm">
                 Verify
               </button>
             )}
