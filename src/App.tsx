@@ -76,7 +76,7 @@ const USER_LEVELS = [
 ];
 
 const TITLES = [
-  { min: 2000, title: "Pihu's Family", icon: '👨‍👩‍👧', perks: true },
+  { min: 2000, title: "Pihu's Family", icon: '👨‍👩‍👧', perks: false },
   { min: 1000, title: "Pihu's Guardian", icon: '🛡️', perks: false },
   { min: 500, title: 'Cat Lover', icon: '❤️', perks: false },
   { min: 250, title: "Pihu's Admirer", icon: '🌸', perks: false },
@@ -1245,11 +1245,6 @@ export default function App() {
                         ? <>{inr(myPreviousTotal)} prev + {inr(amount)} now = <b className="text-stone-700">{inr(myNewTotal)}</b></>
                         : <>Based on {amount > 0 ? inr(amount) : '₹0'} donation</>}
                     </div>
-                    {currentTitle.perks && (
-                      <div className="text-[11px] text-amber-600 font-semibold mt-1">
-                        ⭐ Unlocks Pihu&apos;s exclusive pics &amp; videos!
-                      </div>
-                    )}
                   </div>
 
                   <div>
