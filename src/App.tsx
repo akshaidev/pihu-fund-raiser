@@ -22,7 +22,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import {
-  Check, Copy, Upload, X, Lock, LogOut, Eye, Trash2,
+  Check, Copy, Download, Upload, X, Lock, LogOut, Eye, Trash2,
   Clock, BadgeCheck, ChevronRight, MessageCircleHeart, Send,
 } from 'lucide-react';
 
@@ -1155,13 +1155,22 @@ export default function App() {
                         {copied ? 'Copied' : 'Copy'}
                       </button>
                     </div>
-                    <a
-                      href={`upi://pay?pa=${UPI_ID}&pn=${encodeURIComponent('DONATE TO PIHU')}&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
-                      id="__UPI_BUTTON__"
-                      className="w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-stone-950 font-bold py-3 px-4 rounded-xl text-sm tracking-wide transition border border-amber-600/20 shadow-sm"
-                    >
-                      PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
-                    </a>
+                    <div className="flex gap-2">
+                      <a
+                        href={`upi://pay?pa=${UPI_ID}&pn=${encodeURIComponent('DONATE TO PIHU')}&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
+                        id="__UPI_BUTTON__"
+                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-stone-950 font-bold py-3 px-3 rounded-xl text-sm tracking-wide transition border border-amber-600/20 shadow-sm text-center leading-tight"
+                      >
+                        PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
+                      </a>
+                      <a
+                        href="QR_Code.png"
+                        download="QR_Code.png"
+                        className="shrink-0 inline-flex items-center justify-center gap-1.5 bg-white hover:bg-stone-100 active:scale-[0.98] text-stone-900 font-bold py-3 px-3.5 rounded-xl text-sm transition border border-stone-300 shadow-sm"
+                      >
+                        <Download className="w-4 h-4" /> QR
+                      </a>
+                    </div>
                   </div>
 
                   <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400 -mb-2">2 · Choose amount</div>
