@@ -22,9 +22,10 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import {
-  Check, Copy, Download, Upload, X, Lock, LogOut, Eye, Trash2,
+  Check, Copy, QrCode, Upload, X, Lock, LogOut, Eye, Trash2,
   Clock, BadgeCheck, ChevronRight, MessageCircleHeart, Send,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ---------- Firebase ----------
 const firebaseConfig = {
@@ -337,6 +338,7 @@ export default function App() {
   const [shotName, setShotName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [email, setEmail] = useState('');
@@ -484,7 +486,7 @@ export default function App() {
   };
 
   const openDonate = useCallback(() => {
-    setDonateStep('name'); setShot(''); setShotName(''); setShowDonate(true);
+    setDonateStep('name'); setShot(''); setShotName(''); setShowQr(false); setShowDonate(true);
   }, []);
 
   const proceedToAmount = () => {
@@ -653,6 +655,8 @@ export default function App() {
   const catEmotion = getCatEmotion(amount);
   const myLevel = getUserLevel(myNewTotal);
 
+  const upiLink = `upi://pay?pa=${UPI_ID}&pn=${encodeURIComponent('DONATE TO PIHU')}&cu=INR${amount > 0 ? `&am=${amount}` : ''}`;
+
   const inputCls =
     'w-full px-4 py-3 rounded-xl bg-stone-50 border border-stone-200 text-base sm:text-sm focus:outline-none focus:border-stone-900';
 
@@ -663,9 +667,8 @@ export default function App() {
 
       {toast && (
         <div
-          className={`fixed left-1/2 -translate-x-1/2 z-[60] max-w-[92vw] text-center px-4 py-2.5 rounded-full text-sm font-medium shadow-lg bottom-[calc(5.5rem_+_env(safe-area-inset-bottom))] sm:bottom-6 ${
-            toast.err ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'
-          }`}
+          className={`fixed left-1/2 -translate-x-1/2 z-[60] max-w-[92vw] text-center px-4 py-2.5 rounded-full text-sm font-medium shadow-lg bottom-[calc(5.5rem_+_env(safe-area-inset-bottom))] sm:bottom-6 ${toast.err ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'
+            }`}
         >
           {toast.msg}
         </div>
@@ -788,9 +791,8 @@ export default function App() {
                   {TITLES.map((t) => (
                     <span
                       key={t.title}
-                      className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
-                        t.perks ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-600'
-                      }`}
+                      className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${t.perks ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-600'
+                        }`}
                     >
                       {t.icon} {t.title} {t.perks ? '⭐' : ''}
                     </span>
@@ -1157,20 +1159,32 @@ export default function App() {
                     </div>
                     <div className="flex gap-2">
                       <a
-                        href={`upi://pay?pa=${UPI_ID}&pn=${encodeURIComponent('DONATE TO PIHU')}&cu=INR${amount > 0 ? `&am=${amount}` : ''}`}
+                        href={upiLink}
                         id="__UPI_BUTTON__"
                         className="flex-1 min-w-0 inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-stone-950 font-bold py-3 px-3 rounded-xl text-sm tracking-wide transition border border-amber-600/20 shadow-sm text-center leading-tight"
                       >
                         PAY BY ANY UPI APP {amount > 0 ? `(${inr(amount)})` : ''}
                       </a>
-                      <a
-                        href="QR_Code.png"
-                        download="QR_Code.png"
-                        className="shrink-0 inline-flex items-center justify-center gap-1.5 bg-white hover:bg-stone-100 active:scale-[0.98] text-stone-900 font-bold py-3 px-3.5 rounded-xl text-sm transition border border-stone-300 shadow-sm"
+                      <button
+                        type="button"
+                        onClick={() => setShowQr((s) => !s)}
+                        aria-expanded={showQr}
+                        className={`shrink-0 inline-flex items-center justify-center gap-1.5 active:scale-[0.98] font-bold py-3 px-3.5 rounded-xl text-sm transition border shadow-sm ${showQr ? 'bg-stone-900 text-white border-stone-900' : 'bg-white hover:bg-stone-100 text-stone-900 border-stone-300'
+                          }`}
                       >
-                        <Download className="w-4 h-4" /> QR
-                      </a>
+                        <QrCode className="w-4 h-4" /> QR
+                      </button>
                     </div>
+                    {showQr && (
+                      <div className="flex flex-col items-center gap-2 rounded-xl bg-white border border-stone-200 p-4">
+                        <div className="bg-white p-3 rounded-lg">
+                          <QRCodeSVG value={upiLink} size={192} level="M" bgColor="#ffffff" fgColor="#1c1917" />
+                        </div>
+                        <p className="text-xs text-stone-500 text-center">
+                          Scan with any UPI app{amount > 0 ? <> · pays <b className="text-stone-800">{inr(amount)}</b></> : ' · enter the amount in your app'}
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="text-[11px] font-semibold tracking-wider uppercase text-stone-400 -mb-2">2 · Choose amount</div>
@@ -1212,9 +1226,8 @@ export default function App() {
                         return (
                           <div
                             key={lvl.level}
-                            className={`rounded-xl py-2 px-1 border text-center transition-colors ${
-                              reached ? 'bg-amber-50 border-amber-300' : 'bg-stone-50 border-stone-100 opacity-40'
-                            } ${isCurrent ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+                            className={`rounded-xl py-2 px-1 border text-center transition-colors ${reached ? 'bg-amber-50 border-amber-300' : 'bg-stone-50 border-stone-100 opacity-40'
+                              } ${isCurrent ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
                           >
                             <div className="text-base">{lvl.icon}</div>
                             <div className="text-[9px] font-bold text-stone-400">
