@@ -58,7 +58,7 @@ const proofsCol = () => collection(db, ...base, 'pihu_proofs');
 const messagesCol = () => collection(db, ...base, 'pihu_messages');
 
 // ---------- Config ----------
-const UPI_ID = '8088256450@fam';
+const UPI_ID = 'sunny.reddy0704@okhdfcbank';
 
 const GOALS = [
   { amount: 5000, label: 'Basic Necessities', desc: 'Food & essentials for a month', color: '#f59e0b', track: '#fef3c7' },
